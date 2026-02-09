@@ -141,6 +141,10 @@ class DataStore:
         return [r for r in self.data.get('receivables', []) 
                 if r.get('status') == 'Overdue']
     
+    def get_financial_goals(self) -> List[Dict]:
+        """Get all financial goals"""
+        return self.data.get('financial_goals', [])
+    
     def get_cheque_register(self) -> List[Dict]:
         """Get all cheques"""
         return self.data.get('cheque_register', [])
@@ -239,6 +243,33 @@ class DataStore:
             return False
         except Exception as e:
             print(f"Error updating bank balance: {e}")
+            return False
+
+    def add_financial_goal(self, goal: Dict) -> bool:
+        """Add new financial goal"""
+        try:
+            if 'financial_goals' not in self.data:
+                self.data['financial_goals'] = []
+            self.data['financial_goals'].append(goal)
+            self._save_data()
+            return True
+        except Exception as e:
+            print(f"Error adding financial goal: {e}")
+            return False
+
+    def update_financial_goal(self, goal_id: str, updates: Dict) -> bool:
+        """Update existing financial goal"""
+        try:
+            if 'financial_goals' not in self.data:
+                return False
+            for i, g in enumerate(self.data['financial_goals']):
+                if g['goal_id'] == goal_id:
+                    self.data['financial_goals'][i].update(updates)
+                    self._save_data()
+                    return True
+            return False
+        except Exception as e:
+            print(f"Error updating financial goal: {e}")
             return False
 
 

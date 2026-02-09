@@ -84,3 +84,12 @@ class AgentResponse(BaseModel):
     confidence: float
     needs_human_review: bool
     timestamp: datetime
+
+class FinancialGoal(BaseModel):
+    goal_id: str
+    description: str  # e.g. "Emergency Fund"
+    target_amount: float
+    current_amount: float
+    deadline: Optional[datetime] = None
+    status: str = "In Progress"  # In Progress, Achieved, Failed
+    strategy: str  # Description of how to achieve it

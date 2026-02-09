@@ -16,67 +16,73 @@ class DocProcessorAgent:
     def process(self, file_path: str) -> DocumentExtraction:
         """
         Meera looks at a document and extracts information.
-        She doesn't follow rules - she THINKS about what she sees.
+        Optimized to do identification, extraction, and validation in ONE step.
         """
-        # Step 1: Meera looks at the document
-        visual_analysis = self.brain.see_and_think(
+        # Single consolidated step: Identify -> Extract -> Validate
+        analysis = self.brain.see_and_think(
             character=self.character,
             image_path=file_path,
             question="""
-            Look at this document carefully.
-            1. What type of document is this? (vendor invoice, customer invoice, bank statement, cheque, receipt, or something else)
-            2. What is the overall quality? Can you read everything?
-            3. Give me a summary of what you see. Take your time and be thorough.
+            Analyze this document completely.
+            
+            PART 1: IDENTIFICATION
+            - What type of document is this? (invoice, receipt, bank statement, etc)
+            - Is it readable?
+            
+            PART 2: EXTRACTION
+            Extract ALL financial details as a JSON object inside the response. Look for:
+            - key_dates (date, due_date)
+            - entities (vendor_name, client_name, bank_name)
+            - amounts (base_amount, tax_amount, total_amount)
+            - references (invoice_number, po_number)
+            - line_items (summary of what was bought/sold)
+            
+            PART 3: VALIDATION
+            - Do the numbers add up? (base + tax = total)
+            - Are dates valid?
+            - Any warning flags?
+            
+            OUTPUT FORMAT:
+            Provide your thinking process first, then output the final extraction as a valid JSON object.
+            The JSON should have this structure:
+            {
+                "document_type": "...",
+                "extracted_data": { ... },
+                "validation_notes": "...",
+                "confidence_score": 0.0 to 1.0
+            }
             """
         )
 
-        # Step 2: Based on document type, Meera extracts details
-        extraction = self.brain.see_and_think(
-            character=self.character,
-            image_path=file_path,
-            question=f"""
-            You identified this as: {visual_analysis.response}
-            Now extract ALL the important financial information. Look for:
-            - Names (vendor/client/bank)
-            - Numbers (invoice number, account number)
-            - Dates (invoice date, due date)
-            - Amounts (base amount, taxes, total)
-            - Any reference numbers (PO, project, etc)
+        # Parse the result
+        result_json = self.brain.extract_json(analysis.response)
+        
+        # Fallback if JSON parsing fails or keys are missing - try to find type in text
+        doc_type = result_json.get("document_type")
+        if not doc_type:
+            # Fallback: Guess based on text content
+            lower_text = analysis.response.lower()
+            if "invoice" in lower_text:
+                doc_type = "invoice"
+            elif "statement" in lower_text:
+                doc_type = "bank_statement"
+            elif "receipt" in lower_text:
+                doc_type = "receipt"
+            else:
+                doc_type = "unknown_document"
 
-            For each piece of information:
-            - What is the value?
-            - How confident are you? (certain/likely/unsure)
-            - Any concerns about this value?
-
-            Give me a complete extraction. Format as JSON.
-            """
-        )
-
-        # Step 3: Meera validates what she found
-        validation = self.brain.think(
-            character=self.character,
-            context=f"Extracted data: {extraction.response}",
-            question="""
-            Review what you extracted.
-            1. Do the numbers add up? (base + gst = total?)
-            2. Are the dates sensible?
-            3. Does anything look suspicious?
-            4. Is any critical information missing?
-            5. Should a human double-check anything?
-
-            Give your validation assessment.
-            """
-        )
+        extracted_data = result_json.get("extracted_data", {})
+        validation_notes = result_json.get("validation_notes", analysis.response[:200]) # Fallback to raw text
 
         # Return the extraction
         return DocumentExtraction(
             document_id=generate_id(),
-            document_type=visual_analysis.response,
+            document_type=doc_type,
             file_name=file_path,
             processed_at=datetime.now(),
-            raw_text=visual_analysis.response,
-            extracted_data=parse_json(extraction.response),
-            confidence_notes=validation.response
+            raw_text=analysis.response,
+            extracted_data=extracted_data,
+            confidence_notes=validation_notes
         )
 
     def match_vendor(self, vendor_name: str) -> dict:

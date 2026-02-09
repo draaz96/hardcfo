@@ -1,6 +1,8 @@
 import os
 import json
 import re
+import time
+import random
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 import google.generativeai as genai
@@ -21,6 +23,30 @@ class GeminiBrain:
         self.model = genai.GenerativeModel(model_name)
         self.vision_model = genai.GenerativeModel("gemini-flash-latest") # or pro for vision too
 
+    def _generate_with_retry(self, func, *args, **kwargs):
+        """
+        Execute a generation function with exponential backoff retry.
+        """
+        max_retries = 3
+        base_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                # Check for rate limit errors (429) or Service Unavailable (503)
+                error_str = str(e).lower()
+                if "429" in error_str or "resource exhausted" in error_str or "503" in error_str:
+                    if attempt == max_retries - 1:
+                        raise e
+                    
+                    # Exponential backoff with jitter
+                    delay = (base_delay * (2 ** attempt)) + random.uniform(0, 1)
+                    print(f"⚠️ Rate limit hit. Retrying in {delay:.2f}s...")
+                    time.sleep(delay)
+                else:
+                    raise e
+                    
     @track(name="gemini_brain.think")
     def think(
         self, 
@@ -46,7 +72,7 @@ Think through this step by step, then give your answer.
         if response_format == "json":
             prompt += "\nYour final answer MUST be a valid JSON object."
 
-        response = self.model.generate_content(prompt)
+        response = self._generate_with_retry(self.model.generate_content, prompt)
         full_text = response.text
 
         # Try to split thinking and final response
@@ -71,19 +97,51 @@ Think through this step by step, then give your answer.
     ) -> AgentResponse:
         """
         For agents that need to look at images/documents.
+        Supports Images (via PIL) and PDFs (via PyPDF2 text extraction).
         """
         try:
-            img = Image.open(image_path)
+            # Check file extension
+            is_pdf = image_path.lower().endswith('.pdf')
+            content_input = []
+            
+            if is_pdf:
+                # Always use PyPDF2 for PDFs as requested
+                print(f"📄 Extracting text from PDF (PyPDF2): {image_path}")
+                import PyPDF2
+                text_content = ""
+                with open(image_path, 'rb') as f:
+                    reader = PyPDF2.PdfReader(f)
+                    for page in reader.pages:
+                        extracted = page.extract_text()
+                        if extracted:
+                            text_content += extracted + "\n"
+                
+                # Append extracted text to the question/prompt
+                question = f"{question}\n\nDOCUMENT CONTENT:\n{text_content[:30000]}" # Limit to ~30k chars
+                # content_input remains empty as we put text in prompt
+                
+                # Use standard model for text processing since there's no image
+                model_to_use = self.model 
+            else:
+                # Handle Image with Vision Model
+                img = Image.open(image_path)
+                content_input = [img]
+                model_to_use = self.vision_model
+
             prompt = f"{character}\n\nQUESTION: {question}\n\nAnalyze this document and think step-by-step."
             
-            # Using flash for faster vision processing if preferred, but pro is also good
-            response = self.vision_model.generate_content([prompt, img])
+            # Call Gemini
+            response = self._generate_with_retry(model_to_use.generate_content, [prompt, *content_input])
+            
+            if not response.parts:
+                 raise ValueError("Gemini returned an empty response.")
+
             full_text = response.text
             
             thinking, final_answer = self._split_response(full_text)
             
             return AgentResponse(
-                agent_name="GeminiVisionBrain",
+                agent_name="GeminiVisionBrain" if not is_pdf else "GeminiTextBrain",
                 query=question,
                 thinking=thinking,
                 response=final_answer,
@@ -95,8 +153,8 @@ Think through this step by step, then give your answer.
             return AgentResponse(
                 agent_name="GeminiVisionBrain",
                 query=question,
-                thinking=f"Error processing image: {str(e)}",
-                response="I encountered an error while trying to see the document.",
+                thinking=f"Error processing document: {str(e)}",
+                response=f"I encountered an error while trying to read the document: {str(e)}",
                 confidence=0.0,
                 needs_human_review=True,
                 timestamp=datetime.now()
@@ -129,7 +187,7 @@ USER MESSAGE:
 
 Think step-by-step about the context, then respond.
 """
-        response = self.model.generate_content(prompt)
+        response = self._generate_with_retry(self.model.generate_content, prompt)
         full_text = response.text
         
         thinking, final_answer = self._split_response(full_text)
@@ -143,6 +201,18 @@ Think step-by-step about the context, then respond.
             needs_human_review=False,
             timestamp=datetime.now()
         )
+
+    @track(name="gemini_brain.log_feedback")
+    def log_feedback(self, feedback_type: str, score: float, comments: str) -> dict:
+        """
+        Log human feedback to Opik as a distinct event.
+        """
+        return {
+            "feedback_type": feedback_type,
+            "score": score,
+            "comments": comments,
+            "timestamp": datetime.now()
+        }
 
     def extract_json(self, response: str) -> dict:
         """

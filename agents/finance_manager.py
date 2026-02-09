@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from opik import track
 from config.characters import AgentCharacters
 from tools.gemini_client import GeminiBrain
@@ -163,3 +163,42 @@ Give me a practical assessment.
             context_parts.append(f"CLIENTS: {format_client_context(self.data_store.get_all_clients())}")
             
         return "\n\n".join(context_parts) if context_parts else "No specific context gathered."
+
+    @track(name="arjun.analyze_goals")
+    def analyze_financial_goals(self) -> AgentResponse:
+        """
+        Arjun reviews progress towards financial goals.
+        """
+        goals = self.data_store.get_financial_goals()
+        if not goals:
+            return AgentResponse(
+                agent_name="Arjun",
+                query="Analyze financial goals",
+                thinking="No goals found.",
+                response="We haven't set any financial goals yet. I recommend we set some targets for emergency funds or specific purchases.",
+                confidence=1.0,
+                needs_human_review=False,
+                timestamp=datetime.now()
+            )
+
+        # Calculate current liquid assets for context
+        total_cash = self.data_store.get_total_bank_balance()
+        
+        analysis = self.brain.think(
+            character=self.character,
+            context=f"""
+FINANCIAL GOALS: {format_data(goals)}
+TOTAL LIQUID CASH AVAILABLE: {total_cash}
+TODAY: {date.today()}
+""",
+            question="""
+Analyze our progress towards these financial goals.
+1. Are we on track?
+2. Which goals are at risk?
+3. Do we have enough cash to allocate towards them?
+4. What specific action should we take this week to get closer to our goals?
+
+Explain your reasoning in plain language (for financial literacy).
+"""
+        )
+        return analysis

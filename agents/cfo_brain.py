@@ -23,6 +23,7 @@ class CFOBrainAgent:
         cash_analysis = self.finance_manager.analyze_cash_position()
         payment_reco = self.finance_manager.recommend_payments(cash_analysis.response)
         collection_status = self.finance_manager.analyze_collections()
+        goals_status = self.finance_manager.analyze_financial_goals()
 
         # Rajesh synthesizes everything
         briefing = self.brain.think(
@@ -31,6 +32,7 @@ class CFOBrainAgent:
 FINANCE MANAGER'S CASH ANALYSIS: {cash_analysis.response}
 FINANCE MANAGER'S PAYMENT RECOMMENDATIONS: {payment_reco.response}
 FINANCE MANAGER'S COLLECTION STATUS: {collection_status.response}
+FINANCE MANAGER'S GOAL ANALYSIS: {goals_status.response}
 TODAY: {date.today()}
 DAY: {date.today().strftime('%A')}
 """,
@@ -40,12 +42,14 @@ As CFO, prepare your daily briefing. Think about:
 2. What decisions need to be made right now?
 3. What can wait?
 4. Any red flags I should be worried about?
-5. Any good news?
+5. How are we doing on our long-term financial goals?
+6. Any good news?
 
 Create a briefing that:
 - Starts with the most important thing
 - Is clear about what needs my decision
 - Gives me enough context to decide
+- Explicitly mentions progress on goals
 - Doesn't waste my time with details I don't need
 
 Format it for a busy person reading on their phone.
@@ -73,7 +77,8 @@ Format as a clear list of action items.
             "actions_needed": actions.response,
             "cash_analysis": cash_analysis.response,
             "payment_reco": payment_reco.response,
-            "collection_status": collection_status.response
+            "collection_status": collection_status.response,
+            "goals_status": goals_status.response
         }
 
     @track(name="rajesh.handle_document")
@@ -132,19 +137,47 @@ What is the human telling us? Think about:
 3. Did they ask for more information?
 4. What actions should we take now?
 
-If their response is unclear, what should we ask?
 
-Give me:
-- What I understood
-- Actions to take
-- Confirmation message to send back
+        If their response is unclear, what should we ask?
+
+        Give your answer as a JSON object with:
+        {
+            "understanding": "What you understood",
+            "actions_to_take": "List of actions",
+            "reply_to_user": "The exact message to send back to the human"
+        }
 """
         )
 
+        # Parse the JSON response because we asked for one
+        parsed_response = self.brain.extract_json(understanding.response)
+        
+        reply = parsed_response.get("reply_to_user", understanding.response)
+        actions = parsed_response.get("actions_to_take", "None")
+
+        if "unclear" not in reply.lower():
+            self._log_approval_score(reply, response)
+
         return {
-            "understanding": understanding.response,
-            "needs_clarification": "unclear" in understanding.response.lower()
+            "understanding": reply,
+            "actions": actions,
+            "needs_clarification": "unclear" in reply.lower()
         }
+
+    def _log_approval_score(self, understanding: str, original_response: str):
+        """Helper to log feedback score based on understanding"""
+        score = 0.5
+        feedback_type = "neutral"
+        
+        lower_und = understanding.lower()
+        if "approve" in lower_und or "confirmed" in lower_und or "yes" in lower_und:
+            score = 1.0
+            feedback_type = "positive"
+        elif "reject" in lower_und or "no" in lower_und or "cancel" in lower_und:
+            score = 0.0
+            feedback_type = "negative"
+            
+        self.brain.log_feedback(feedback_type, score, original_response)
 
     @track(name="rajesh.handle_unusual")
     def handle_unusual_situation(self, situation: str, data: dict) -> dict:
