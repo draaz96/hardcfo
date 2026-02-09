@@ -1,8 +1,12 @@
 .env
 __pycache__/
 *.pyc
-data/*
-!data/.gitkeep
+# data/*
+# !data/.gitkeep
+**/*.key
+**/*.pem
+**/*.cert
+**/*.p12
 .ipynb_checkpoints/
 .pytest_cache/
 .antigravity/
